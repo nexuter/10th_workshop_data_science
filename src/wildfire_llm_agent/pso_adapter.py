@@ -13,7 +13,7 @@ DEFAULT_PSO_PARAMS = Path(__file__).resolve().parents[1] / "pso" / "pso_params_a
 
 
 class PsoWarmStartGenerator:
-    """Adapter around the existing ros_wildfire PSO/Huygens prediction code."""
+    """Adapter around the bundled ros_wildfire PSO/Huygens prediction code (src/ros_wildfire)."""
 
     def __init__(
         self,
@@ -71,9 +71,10 @@ class PsoWarmStartGenerator:
         except ImportError as exc:
             missing = getattr(exc, "name", None) or str(exc)
             raise RuntimeError(
-                "PSO warm start requires torch and the ros_wildfire package. "
-                f"Import failed for: {missing}. Use the same Python environment that can import ros_wildfire, "
-                "or pass --ros-wildfire-src <path-to-ros-based-wildfire-prediction/src>."
+                "PSO warm start requires torch and the bundled ros_wildfire package "
+                f"(src/ros_wildfire). Import failed for: {missing}. Install the "
+                "'pso' extra (pip install -e .[pso]) in the active environment, or "
+                "pass --ros-wildfire-src <path> to use an alternate ros_wildfire copy."
             ) from exc
 
         cfg = ExperimentConfig()

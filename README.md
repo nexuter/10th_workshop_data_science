@@ -47,26 +47,28 @@ truth for reproducing the code's results from scratch.
 ```powershell
 python -m venv .venv
 .venv\Scripts\pip install -e .
-# Optional: GeoTIFF reading for materialized static layers (Fuel_Map, Topography_Map)
-.venv\Scripts\pip install -e .[geo]
+# Needed to run the PSO/physics warm start (bundled ros_wildfire simulator)
+.venv\Scripts\pip install -e .[pso]
 # Optional: test runner extras
 .venv\Scripts\pip install -e .[dev]
 ```
 
 Requires Python 3.10+. Core dependencies are `numpy` and `pillow`; the
-synthetic demo and unit tests do not require `rasterio` or any LLM serving
-stack.
+synthetic demo and unit tests do not require `torch`, `rasterio`, or any LLM
+serving stack.
 
-Two external dependencies are optional and only needed for the full
-experimental pipeline (not for the synthetic demo or unit tests):
+This repository bundles its own PSO/physics simulator
+(`src/ros_wildfire`, vendored from a separate `ros-based-wildfire-prediction`
+project under the MIT license — see `THIRD_PARTY_NOTICES.md`), so no external
+checkout is needed:
 
-- **PSO/physics warm start**: the CLI imports an external `ros_wildfire`
-  package (Huygens/PSO wildfire simulator). Point `--ros-wildfire-src` at the
-  local `ros-based-wildfire-prediction/src` checkout if it is not importable
-  from the active environment. Use `--warm-start placeholder` to skip PSO
-  entirely for quick debugging. Run `python -m wildfire_llm_agent.cli doctor`
-  to check whether PSO imports cleanly and whether the `.venv` user-site
-  `torch` package is visible.
+- **PSO/physics warm start**: install the `pso` extra
+  (`torch`, `rasterio`) and pass `--warm-start pso`. Use
+  `--warm-start placeholder` to skip PSO entirely for quick debugging. Run
+  `python -m wildfire_llm_agent.cli doctor` to check whether `torch` and
+  `ros_wildfire` import cleanly in the active environment. `--ros-wildfire-src
+  <path>` is still accepted if you want to point at a different/alternate
+  `ros_wildfire` copy instead of the bundled one.
 - **LLM reasoner**: pass `--reasoner ollama --ollama-model <name>` to use a
   local Ollama-served multimodal model (e.g. `llama4:latest`,
   `gemma4:31b`). Without `--reasoner ollama`, the CLI falls back to a
@@ -193,30 +195,31 @@ this repository; point `--dataset-root` at your own local copy.
 
 ## Core Evaluation Workflow
 
-Replace `<ROS_WILDFIRE_SRC>` with the local path to the external
-`ros-based-wildfire-prediction/src` checkout in every command below (or omit
-`--ros-wildfire-src` if `ros_wildfire` is already importable).
+The commands below assume the `pso` extra is installed (`pip install -e
+.[pso]`), so `--warm-start pso` resolves the bundled `src/ros_wildfire`
+package with no extra flags. Pass `--ros-wildfire-src <path>` only if you want
+to point at a different `ros_wildfire` copy instead.
 
 Run a smoke evaluation on the materialized dataset root. Use `--pso-t-cap 48`
 for any result you intend to report; smaller values are debugging shortcuts
 only:
 
 ```powershell
-python -m wildfire_llm_agent.cli evaluate-materialized-root --dataset-root dataset\pkl_materialized --max-scenarios 1 --max-events-per-scenario 1 --max-frame-pairs-per-event 2 --output-dir outputs\materialized_eval_pso_smoke --warm-start pso --pso-device cpu --pso-t-cap 48 --ros-wildfire-src <ROS_WILDFIRE_SRC> --save-panels
+python -m wildfire_llm_agent.cli evaluate-materialized-root --dataset-root dataset\pkl_materialized --max-scenarios 1 --max-events-per-scenario 1 --max-frame-pairs-per-event 2 --output-dir outputs\materialized_eval_pso_smoke --warm-start pso --pso-device cpu --pso-t-cap 48 --save-panels
 ```
 
 Run the physical-only vs. LLM-only vs. hybrid ablation with the area-budget
 selector and Llama4 through Ollama:
 
 ```powershell
-python -m wildfire_llm_agent.cli evaluate-materialized-root --dataset-root dataset\pkl_materialized --max-scenarios 2 --max-events-per-scenario 2 --max-frame-pairs-per-event 3 --output-dir outputs\ablation_hybrid_prior_gated_ratio10 --warm-start pso --pso-device cpu --pso-t-cap 48 --ros-wildfire-src <ROS_WILDFIRE_SRC> --pso-cache-dir outputs\pso_cache --reasoner ollama --ollama-model llama4:latest --ollama-timeout-seconds 600 --selector area_budget --selector-max-new-to-current-ratio 10 --selector-prior-fallback llm_only --include-llm-only --ollama-cache-dir outputs\ollama_cache
+python -m wildfire_llm_agent.cli evaluate-materialized-root --dataset-root dataset\pkl_materialized --max-scenarios 2 --max-events-per-scenario 2 --max-frame-pairs-per-event 3 --output-dir outputs\ablation_hybrid_prior_gated_ratio10 --warm-start pso --pso-device cpu --pso-t-cap 48 --pso-cache-dir outputs\pso_cache --reasoner ollama --ollama-model llama4:latest --ollama-timeout-seconds 600 --selector area_budget --selector-max-new-to-current-ratio 10 --selector-prior-fallback llm_only --include-llm-only --ollama-cache-dir outputs\ollama_cache
 ```
 
 Run the pixel-level calibration experiment (trains the learned calibrator on
 early events per scenario, evaluates on a held-out event):
 
 ```powershell
-python -m wildfire_llm_agent.cli calibrate-materialized-root --dataset-root dataset\pkl_materialized --max-scenarios 5 --max-events-per-scenario 3 --train-events-per-scenario 2 --max-frame-pairs-per-event 5 --output-dir outputs\pixel_calibration_5scenario_5frames --warm-start pso --pso-device cpu --pso-t-cap 48 --ros-wildfire-src <ROS_WILDFIRE_SRC> --pso-cache-dir outputs\pso_cache --reasoner ollama --ollama-model llama4:latest --ollama-timeout-seconds 600 --selector area_budget --selector-max-new-to-current-ratio 10 --selector-prior-fallback llm_only --ollama-cache-dir outputs\ollama_cache --calibration-iterations 600 --calibration-learning-rate 0.08
+python -m wildfire_llm_agent.cli calibrate-materialized-root --dataset-root dataset\pkl_materialized --max-scenarios 5 --max-events-per-scenario 3 --train-events-per-scenario 2 --max-frame-pairs-per-event 5 --output-dir outputs\pixel_calibration_5scenario_5frames --warm-start pso --pso-device cpu --pso-t-cap 48 --pso-cache-dir outputs\pso_cache --reasoner ollama --ollama-model llama4:latest --ollama-timeout-seconds 600 --selector area_budget --selector-max-new-to-current-ratio 10 --selector-prior-fallback llm_only --ollama-cache-dir outputs\ollama_cache --calibration-iterations 600 --calibration-learning-rate 0.08
 ```
 
 For a larger robustness check, rerun the same command with `--max-scenarios
@@ -229,7 +232,7 @@ LLM calls.
 Run rotating held-out-event calibration to check split sensitivity:
 
 ```powershell
-python -m wildfire_llm_agent.cli cross-validate-materialized-calibration --dataset-root dataset\pkl_materialized --max-scenarios 5 --max-events-per-scenario 3 --max-frame-pairs-per-event 5 --output-dir outputs\pixel_calibration_rotating_cv_5scenario_5frames --warm-start pso --pso-device cpu --pso-t-cap 48 --ros-wildfire-src <ROS_WILDFIRE_SRC> --pso-cache-dir outputs\pso_cache --reasoner ollama --ollama-model llama4:latest --ollama-timeout-seconds 600 --selector area_budget --selector-max-new-to-current-ratio 10 --selector-prior-fallback llm_only --ollama-cache-dir outputs\ollama_cache --calibration-iterations 600 --calibration-learning-rate 0.08 --min-train-events 2
+python -m wildfire_llm_agent.cli cross-validate-materialized-calibration --dataset-root dataset\pkl_materialized --max-scenarios 5 --max-events-per-scenario 3 --max-frame-pairs-per-event 5 --output-dir outputs\pixel_calibration_rotating_cv_5scenario_5frames --warm-start pso --pso-device cpu --pso-t-cap 48 --pso-cache-dir outputs\pso_cache --reasoner ollama --ollama-model llama4:latest --ollama-timeout-seconds 600 --selector area_budget --selector-max-new-to-current-ratio 10 --selector-prior-fallback llm_only --ollama-cache-dir outputs\ollama_cache --calibration-iterations 600 --calibration-learning-rate 0.08 --min-train-events 2
 ```
 
 This writes `metrics.csv`, `folds.csv`, `summary.json`, and
@@ -264,7 +267,7 @@ context panel, per-method metrics, correction plan, and selector diagnostics)
 for a single scenario/event/frame:
 
 ```powershell
-python -m wildfire_llm_agent.cli export-case-figure --scenario-root dataset\pkl_materialized\0002_00001_pkl\0002 --event-id 0002_00003 --frame-index 2 --output-dir outputs\case_figures\accepted_0002_00003_f2 --warm-start pso --pso-device cpu --pso-t-cap 48 --ros-wildfire-src <ROS_WILDFIRE_SRC> --reasoner ollama --ollama-model llama4:latest --ollama-timeout-seconds 600 --selector area_budget --include-llm-only
+python -m wildfire_llm_agent.cli export-case-figure --scenario-root dataset\pkl_materialized\0002_00001_pkl\0002 --event-id 0002_00003 --frame-index 2 --output-dir outputs\case_figures\accepted_0002_00003_f2 --warm-start pso --pso-device cpu --pso-t-cap 48 --reasoner ollama --ollama-model llama4:latest --ollama-timeout-seconds 600 --selector area_budget --include-llm-only
 ```
 
 ## Experiment Protocol
